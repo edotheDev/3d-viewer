@@ -1,0 +1,6 @@
+{
+  "name": "3D Model Viewer",
+  "description": "Production-ready WebGL 3D model viewer with PBR, Clay, Wireframe, Albedo, and UV material modes, OrbitControls, high-res screenshot capture, and support for GLB, GLTF, and FBX files.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
