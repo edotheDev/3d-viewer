@@ -31,17 +31,6 @@
   }
 }
 
-/* Minimalist Dot Viewport Grid */
-.viewport-grid {
-  position: absolute;
-  inset: 0;
-  background-image: radial-gradient(var(--ui-soft) 1.25px, transparent 1.25px);
-  background-size: 40px 40px;
-  opacity: 0.85;
-  pointer-events: none;
-  z-index: 1;
-}
-
 /* Clean Minimalism surface treatments */
 .panel-backdrop {
   background: rgba(255, 255, 255, 0.94);

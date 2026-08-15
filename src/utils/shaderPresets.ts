@@ -350,4 +350,51 @@ void main() {
     },
     transparent: false,
   },
+  {
+    id: 'godot-spatial-plasma',
+    name: 'Godot Spatial Plasma',
+    description: 'Godot 4 .gdshader spatial shader with procedural Voronoi plasma & emission.',
+    vertexShader: DEFAULT_VERTEX_SHADER,
+    fragmentShader: `uniform float u_time;
+uniform vec3 u_color;
+uniform vec3 u_colorSecondary;
+uniform float u_intensity;
+uniform float u_speed;
+uniform float u_scale;
+
+varying vec3 vNormal;
+varying vec3 vPosition;
+varying vec2 vUv;
+varying vec3 vViewPosition;
+
+void main() {
+  vec3 norm = normalize(vNormal);
+  vec3 view = normalize(vViewPosition);
+  float TIME = u_time * u_speed;
+
+  // Godot spatial style plasma
+  vec2 uv = vUv * 6.0 * u_scale;
+  float v = sin(uv.x + TIME) + sin(uv.y + TIME) + sin(uv.x + uv.y + TIME);
+  v = sin(v * 3.14159);
+  
+  vec3 ALBEDO = mix(u_color, u_colorSecondary, v * 0.5 + 0.5);
+  float fresnel = pow(1.0 - max(dot(norm, view), 0.0), 2.5);
+  vec3 EMISSION = ALBEDO * fresnel * 2.0 * u_intensity;
+  
+  // Lighting
+  vec3 lightDir = normalize(vec3(0.7, 1.2, 0.5));
+  float diff = max(dot(norm, lightDir), 0.0) * 0.8 + 0.2;
+  
+  gl_FragColor = vec4(ALBEDO * diff + EMISSION, 1.0);
+}
+`,
+    uniforms: {
+      u_color: '#06b6d4',
+      u_colorSecondary: '#a855f7',
+      u_intensity: 1.3,
+      u_speed: 1.2,
+      u_scale: 1.0,
+    },
+    transparent: false,
+  },
 ];

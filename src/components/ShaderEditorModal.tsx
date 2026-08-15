@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { CustomShaderConfig } from '../types';
 import { SHADER_PRESETS, DEFAULT_VERTEX_SHADER } from '../utils/shaderPresets';
+import { parseGodotShader } from '../utils/godotShaderParser';
 
 interface ShaderEditorModalProps {
   isOpen: boolean;
@@ -78,7 +79,24 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
       if (!content) return;
 
       const fileName = file.name.toLowerCase();
-      if (fileName.endsWith('.json')) {
+      if (fileName.endsWith('.gdshader')) {
+        try {
+          const config = parseGodotShader(content, file.name.replace(/\.[^/.]+$/, ''));
+          setLocalFrag(config.fragmentShader);
+          setLocalVert(config.vertexShader || DEFAULT_VERTEX_SHADER);
+          onUpdateShader(config);
+          onApplyShaderMode();
+          setCompileStatus({
+            success: true,
+            msg: `Transpiled & loaded Godot .gdshader "${file.name}"!`,
+          });
+        } catch (err: any) {
+          setCompileStatus({
+            success: false,
+            msg: `Error parsing .gdshader: ${err?.message || 'Invalid syntax'}`,
+          });
+        }
+      } else if (fileName.endsWith('.json')) {
         try {
           const parsed = JSON.parse(content);
           if (parsed.fragmentShader) {
@@ -94,6 +112,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
               transparent: parsed.transparent ?? shaderConfig.transparent,
               wireframe: parsed.wireframe ?? shaderConfig.wireframe,
             });
+            onApplyShaderMode();
             setCompileStatus({ success: true, msg: `Loaded shader from ${file.name}` });
           }
         } catch {
@@ -106,15 +125,17 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
           ...shaderConfig,
           vertexShader: content,
         });
+        onApplyShaderMode();
         setCompileStatus({ success: true, msg: `Loaded vertex shader from ${file.name}` });
       } else {
-        // Assume fragment shader (.frag or .glsl)
+        // Assume fragment shader (.frag, .glsl, or raw shader code)
         setLocalFrag(content);
         setActiveTab('fragment');
         onUpdateShader({
           ...shaderConfig,
           fragmentShader: content,
         });
+        onApplyShaderMode();
         setCompileStatus({ success: true, msg: `Loaded fragment shader from ${file.name}` });
       }
     };
@@ -492,7 +513,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileUpload}
-                accept=".glsl,.frag,.vert,.json,.txt"
+                accept=".gdshader,.glsl,.frag,.vert,.json,.txt"
                 className="hidden"
               />
               <button
@@ -500,7 +521,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
                 className="flex-1 py-2 px-3 rounded-full bg-white border border-[#E5E5E5] text-[#111111] font-acid text-[11px] uppercase tracking-wider hover:border-[#111111] transition-all flex items-center justify-center gap-1.5"
               >
                 <Upload className="w-3.5 h-3.5" />
-                <span>Load Shader File (.glsl/.json)</span>
+                <span>Load Shader (.gdshader/.glsl/.json)</span>
               </button>
 
               <button

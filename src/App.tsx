@@ -24,10 +24,19 @@ import {
 } from './types';
 import { SAMPLE_MODELS } from './utils/sampleModels';
 import { SHADER_PRESETS } from './utils/shaderPresets';
+import { parseGodotShader } from './utils/godotShaderParser';
 import { loadModelFromSource, loadModelFromFile } from './utils/modelLoader';
 import { analyzeThreeObject, formatNumber } from './utils/modelAnalyzer';
 import { captureCanvasScreenshot } from './utils/screenshot';
 import { Loader2 } from 'lucide-react';
+
+const BACKGROUND_TONES: Record<string, string> = {
+  light: '#F7F7F7',
+  neutral: '#EAEAEA',
+  studio: '#E0E0E0',
+  dark: '#1A1A1A',
+  'pure-black': '#000000',
+};
 
 const DEFAULT_SETTINGS: ViewerSettings = {
   renderMode: 'normal',
@@ -149,16 +158,106 @@ export default function App() {
     [addToast]
   );
 
-  // Load model from custom uploaded file
+  // Load model or shader from custom uploaded file
   const handleLoadCustomFile = useCallback(
     async (file: File) => {
       const fileName = file.name;
       const ext = fileName.split('.').pop()?.toLowerCase();
+
+      // Check if it is a shader file (.gdshader, .glsl, .frag, .vert, .json)
+      if (ext === 'gdshader') {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const content = e.target?.result as string;
+          if (!content) return;
+          try {
+            const shaderConfig = parseGodotShader(content, fileName.replace(/\.[^/.]+$/, ''));
+            setSettings((prev) => ({
+              ...prev,
+              customShader: shaderConfig,
+              renderMode: 'shader',
+            }));
+            addToast({
+              type: 'success',
+              title: 'Godot Shader Imported (.gdshader)',
+              description: `Transpiled & running live on active 3D model!`,
+            });
+          } catch (err: any) {
+            addToast({
+              type: 'error',
+              title: 'Error Parsing .gdshader',
+              description: err?.message || 'Invalid Godot shader syntax',
+            });
+          }
+        };
+        reader.readAsText(file);
+        return;
+      }
+
+      if (ext === 'glsl' || ext === 'frag' || ext === 'vert' || ext === 'json') {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const content = e.target?.result as string;
+          if (!content) return;
+          try {
+            if (ext === 'json') {
+              const parsed = JSON.parse(content);
+              setSettings((prev) => ({
+                ...prev,
+                customShader: {
+                  id: `custom_${Date.now()}`,
+                  name: parsed.name || fileName.replace(/\.[^/.]+$/, ''),
+                  description: parsed.description || 'Imported shader config',
+                  vertexShader: parsed.vertexShader || prev.customShader.vertexShader,
+                  fragmentShader: parsed.fragmentShader || content,
+                  uniforms: parsed.uniforms || prev.customShader.uniforms,
+                  transparent: parsed.transparent ?? prev.customShader.transparent,
+                  wireframe: parsed.wireframe ?? prev.customShader.wireframe,
+                },
+                renderMode: 'shader',
+              }));
+            } else if (ext === 'vert') {
+              setSettings((prev) => ({
+                ...prev,
+                customShader: {
+                  ...prev.customShader,
+                  vertexShader: content,
+                },
+                renderMode: 'shader',
+              }));
+            } else {
+              setSettings((prev) => ({
+                ...prev,
+                customShader: {
+                  ...prev.customShader,
+                  fragmentShader: content,
+                },
+                renderMode: 'shader',
+              }));
+            }
+            addToast({
+              type: 'success',
+              title: 'Custom Shader Loaded',
+              description: `Loaded ${fileName} and switched to Shader Mode`,
+            });
+          } catch {
+            addToast({
+              type: 'error',
+              title: 'Invalid Shader File',
+              description: 'Could not parse the shader source code.',
+            });
+          }
+        };
+        reader.readAsText(file);
+        return;
+      }
+
+      // Check 3D Model Formats
       if (ext !== 'glb' && ext !== 'gltf' && ext !== 'fbx') {
         addToast({
           type: 'error',
           title: 'Unsupported File Format',
-          description: 'Please upload a .glb, .gltf, or .fbx 3D model.',
+          description: 'Please upload a 3D model (.glb, .gltf, .fbx) or shader (.gdshader, .glsl).',
         });
         return;
       }
@@ -239,40 +338,48 @@ export default function App() {
   }, []);
 
   // Screenshot Capture Handler
-  const handleTakeScreenshot = useCallback(async () => {
-    if (!canvasRef.current || isCapturing) return;
+  const handleTakeScreenshot = useCallback(
+    async (transparentOverride?: boolean) => {
+      if (!canvasRef.current || isCapturing) return;
 
-    setIsCapturing(true);
-    setIsFlashActive(true);
+      setIsCapturing(true);
+      setIsFlashActive(true);
 
-    // Trigger flash animation
-    setTimeout(() => setIsFlashActive(false), 200);
+      // Trigger flash animation
+      setTimeout(() => setIsFlashActive(false), 200);
 
-    try {
-      const { dataUrl, filename } = await captureCanvasScreenshot(
-        canvasRef.current,
-        currentModelInfo.name,
-        settings.renderMode,
-        settings.transparentBackground
-      );
+      // Default to transparent unless specified
+      const isTransparent = transparentOverride !== undefined ? transparentOverride : true;
+      const bgColor = BACKGROUND_TONES[settings.backgroundTone] || '#F7F7F7';
 
-      addToast({
-        type: 'screenshot',
-        title: 'High-Res Capture Saved',
-        description: filename,
-        thumbnail: dataUrl,
-      });
-    } catch (err) {
-      console.error('Screenshot error:', err);
-      addToast({
-        type: 'error',
-        title: 'Screenshot Failed',
-        description: 'Unable to capture WebGL context.',
-      });
-    } finally {
-      setIsCapturing(false);
-    }
-  }, [isCapturing, currentModelInfo.name, settings.renderMode, settings.transparentBackground, addToast]);
+      try {
+        const { dataUrl, filename } = await captureCanvasScreenshot(
+          canvasRef.current,
+          currentModelInfo.name,
+          settings.renderMode,
+          isTransparent,
+          bgColor
+        );
+
+        addToast({
+          type: 'screenshot',
+          title: isTransparent ? 'Transparent PNG Exported' : 'High-Res Capture Saved',
+          description: filename,
+          thumbnail: dataUrl,
+        });
+      } catch (err) {
+        console.error('Screenshot error:', err);
+        addToast({
+          type: 'error',
+          title: 'Screenshot Failed',
+          description: 'Unable to capture WebGL context.',
+        });
+      } finally {
+        setIsCapturing(false);
+      }
+    },
+    [isCapturing, currentModelInfo.name, settings.renderMode, settings.backgroundTone, addToast]
+  );
 
   // Keyboard Shortcuts
   useEffect(() => {
@@ -305,7 +412,11 @@ export default function App() {
           break;
         case 'c':
         case 'C':
-          handleTakeScreenshot();
+          if (e.shiftKey) {
+            handleTakeScreenshot(false); // Solid backdrop
+          } else {
+            handleTakeScreenshot(true); // Transparent PNG
+          }
           break;
         case 'r':
         case 'R':
@@ -367,9 +478,6 @@ export default function App() {
           isFlashActive ? 'opacity-90' : 'opacity-0'
         }`}
       />
-
-      {/* Viewport Grid Pattern Overlay */}
-      <div className="viewport-grid" />
 
       {/* 3D WebGL Canvas Viewport */}
       <Canvas3D
