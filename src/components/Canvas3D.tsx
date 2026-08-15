@@ -176,24 +176,27 @@ export const Canvas3D: React.FC<Canvas3DProps> = ({
           color="#ffffff"
         />
 
-        {/* Environment map for realistic PBR reflections */}
-        <Suspense fallback={null}>
-          <Environment
-            preset={settings.environmentPreset as any}
-            environmentIntensity={settings.envIntensity}
-          />
-        </Suspense>
+        {/* Environment map for realistic PBR reflections (disabled in solid clay & unlit modes) */}
+        {settings.renderMode !== 'clay' && settings.renderMode !== 'albedo' && (
+          <Suspense fallback={null}>
+            <Environment
+              preset={settings.environmentPreset as any}
+              environmentIntensity={settings.envIntensity}
+            />
+          </Suspense>
+        )}
 
         {/* 3D Model Hierarchy */}
         <ModelViewerScene
           model={model}
           renderMode={settings.renderMode}
           wireframeColor={settings.wireframeColor}
+          customShader={settings.customShader}
           animations={animations}
         />
 
-        {/* Soft Contact Shadows on Ground */}
-        {settings.showShadows && (
+        {/* Soft Contact Shadows on Ground (hidden in solid clay view for pure clean silhouette) */}
+        {settings.showShadows && settings.renderMode !== 'clay' && (
           <ContactShadows
             position={[0, 0.001, 0]}
             opacity={isLightBg ? 0.35 : 0.75}

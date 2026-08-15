@@ -6,7 +6,7 @@ import {
   Sliders,
   RotateCcw,
   ChevronDown,
-  Sparkles,
+  Code2,
 } from 'lucide-react';
 import { SampleModel, ModelStats } from '../types';
 import { SAMPLE_MODELS } from '../utils/sampleModels';
@@ -19,9 +19,11 @@ interface TopHeaderProps {
   onTakeScreenshot: () => void;
   onToggleInspector: () => void;
   onToggleSettings: () => void;
+  onToggleShaderEditor: () => void;
   onResetCamera: () => void;
   isInspectorOpen: boolean;
   isSettingsOpen: boolean;
+  isShaderEditorOpen: boolean;
   stats: ModelStats | null;
   currentModelName: string;
   isCapturing: boolean;
@@ -34,9 +36,11 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
   onTakeScreenshot,
   onToggleInspector,
   onToggleSettings,
+  onToggleShaderEditor,
   onResetCamera,
   isInspectorOpen,
   isSettingsOpen,
+  isShaderEditorOpen,
   stats,
   currentModelName,
   isCapturing,
@@ -193,10 +197,25 @@ export const TopHeader: React.FC<TopHeaderProps> = ({
               ? 'bg-[#111111] text-white border-[#111111]'
               : 'bg-white border-[#E5E5E5] text-[#111111] hover:bg-neutral-100 hover:border-[#111111]'
           }`}
-          title="Model Geometry & Materials Inspector"
+          title="Model Geometry & Materials Inspector (I)"
           aria-label="Model Geometry & Materials Inspector"
         >
           <Layers className="w-3.5 h-3.5" />
+        </button>
+
+        {/* GLSL Shader Studio Drawer Toggle */}
+        <button
+          id="btn-toggle-shader-studio"
+          onClick={onToggleShaderEditor}
+          className={`p-2.5 rounded-full border transition-all shadow-[0_4px_12px_rgba(0,0,0,0.03)] ${
+            isShaderEditorOpen
+              ? 'bg-[#111111] text-white border-[#111111]'
+              : 'bg-white border-[#E5E5E5] text-[#111111] hover:bg-neutral-100 hover:border-[#111111]'
+          }`}
+          title="GLSL Shader Studio & Editor (S)"
+          aria-label="GLSL Shader Studio & Editor"
+        >
+          <Code2 className="w-3.5 h-3.5" />
         </button>
 
         {/* Environment & Lighting Settings Toggle */}

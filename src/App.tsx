@@ -11,6 +11,7 @@ import { TopHeader } from './components/TopHeader';
 import { CameraControlsOverlay } from './components/CameraControlsOverlay';
 import { InspectorModal } from './components/InspectorModal';
 import { SettingsModal } from './components/SettingsModal';
+import { ShaderEditorModal } from './components/ShaderEditorModal';
 import { DropZoneOverlay } from './components/DropZoneOverlay';
 import { ToastContainer, ToastMessage } from './components/Toast';
 import {
@@ -19,8 +20,10 @@ import {
   SampleModel,
   ModelStats,
   CameraViewPreset,
+  CustomShaderConfig,
 } from './types';
 import { SAMPLE_MODELS } from './utils/sampleModels';
+import { SHADER_PRESETS } from './utils/shaderPresets';
 import { loadModelFromSource, loadModelFromFile } from './utils/modelLoader';
 import { analyzeThreeObject, formatNumber } from './utils/modelAnalyzer';
 import { captureCanvasScreenshot } from './utils/screenshot';
@@ -41,6 +44,7 @@ const DEFAULT_SETTINGS: ViewerSettings = {
   wireframeColor: '#111111',
   exposure: 1.0,
   transparentBackground: false,
+  customShader: SHADER_PRESETS[0],
 };
 
 export default function App() {
@@ -67,6 +71,7 @@ export default function App() {
   const [isFlashActive, setIsFlashActive] = useState<boolean>(false);
   const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [isShaderEditorOpen, setIsShaderEditorOpen] = useState<boolean>(false);
   const [activePresetView, setActivePresetView] = useState<CameraViewPreset | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -209,11 +214,28 @@ export default function App() {
   // Material Mode Switch
   const handleModeChange = useCallback((mode: RenderMode) => {
     setSettings((prev) => ({ ...prev, renderMode: mode }));
-  }, []);
+    const titles: Record<RenderMode, string> = {
+      normal: 'Normal PBR Mode: Full materials & textures enabled',
+      clay: 'Clay Mode: Solid matte sculpt view (no reflections or shadows)',
+      wireframe: 'Wireframe Mode: Mesh topology analysis',
+      albedo: 'Albedo Mode: Unlit base color texture map',
+      uv: 'UV Mode: Checkerboard mapping projection',
+      shader: 'Custom Shader Engine: GLSL real-time shading active',
+    };
+    addToast({
+      title: `${mode.toUpperCase()} MODE ACTIVE`,
+      description: titles[mode],
+      type: 'info',
+    });
+  }, [addToast]);
 
   // Update Settings Partial
   const handleUpdateSettings = useCallback((newSettings: Partial<ViewerSettings>) => {
     setSettings((prev) => ({ ...prev, ...newSettings }));
+  }, []);
+
+  const handleUpdateCustomShader = useCallback((config: CustomShaderConfig) => {
+    setSettings((prev) => ({ ...prev, customShader: config }));
   }, []);
 
   // Screenshot Capture Handler
@@ -273,6 +295,13 @@ export default function App() {
           break;
         case '5':
           handleModeChange('uv');
+          break;
+        case '6':
+          handleModeChange('shader');
+          break;
+        case 's':
+        case 'S':
+          setIsShaderEditorOpen((prev) => !prev);
           break;
         case 'c':
         case 'C':
@@ -391,14 +420,22 @@ export default function App() {
         onToggleInspector={() => {
           setIsInspectorOpen(!isInspectorOpen);
           if (isSettingsOpen) setIsSettingsOpen(false);
+          if (isShaderEditorOpen) setIsShaderEditorOpen(false);
         }}
         onToggleSettings={() => {
           setIsSettingsOpen(!isSettingsOpen);
           if (isInspectorOpen) setIsInspectorOpen(false);
+          if (isShaderEditorOpen) setIsShaderEditorOpen(false);
+        }}
+        onToggleShaderEditor={() => {
+          setIsShaderEditorOpen(!isShaderEditorOpen);
+          if (isInspectorOpen) setIsInspectorOpen(false);
+          if (isSettingsOpen) setIsSettingsOpen(false);
         }}
         onResetCamera={() => setActivePresetView('reset')}
         isInspectorOpen={isInspectorOpen}
         isSettingsOpen={isSettingsOpen}
+        isShaderEditorOpen={isShaderEditorOpen}
         stats={stats}
         currentModelName={currentModelInfo.name}
         isCapturing={isCapturing}
@@ -408,6 +445,8 @@ export default function App() {
       <FloatingNavBar
         currentMode={settings.renderMode}
         onModeChange={handleModeChange}
+        onOpenShaderEditor={() => setIsShaderEditorOpen(true)}
+        activeShaderName={settings.customShader?.name}
       />
 
       {/* Bottom Left Camera Presets & Turntable */}
@@ -432,6 +471,14 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         onUpdateSettings={handleUpdateSettings}
+      />
+
+      <ShaderEditorModal
+        isOpen={isShaderEditorOpen}
+        onClose={() => setIsShaderEditorOpen(false)}
+        shaderConfig={settings.customShader || SHADER_PRESETS[0]}
+        onUpdateShader={handleUpdateCustomShader}
+        onApplyShaderMode={() => handleModeChange('shader')}
       />
 
       {/* Drag and Drop Zone Fullscreen Prompt */}

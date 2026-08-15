@@ -1,4 +1,4 @@
-export type RenderMode = 'normal' | 'clay' | 'wireframe' | 'albedo' | 'uv';
+export type RenderMode = 'normal' | 'clay' | 'wireframe' | 'albedo' | 'uv' | 'shader';
 
 export type BackgroundTone = 'dark' | 'studio' | 'neutral' | 'light' | 'pure-black';
 
@@ -32,6 +32,25 @@ export interface SampleModel {
   scale?: number;
 }
 
+export interface CustomShaderConfig {
+  id: string;
+  name: string;
+  description: string;
+  vertexShader: string;
+  fragmentShader: string;
+  uniforms: {
+    u_time?: number;
+    u_color: string; // hex color e.g. '#22d3ee'
+    u_colorSecondary: string; // hex color e.g. '#a855f7'
+    u_intensity: number;
+    u_speed: number;
+    u_scale: number;
+  };
+  wireframe?: boolean;
+  transparent?: boolean;
+  side?: 'front' | 'back' | 'double';
+}
+
 export interface ViewerSettings {
   renderMode: RenderMode;
   backgroundTone: BackgroundTone;
@@ -48,6 +67,7 @@ export interface ViewerSettings {
   wireframeThickness?: number;
   exposure: number;
   transparentBackground: boolean;
+  customShader?: CustomShaderConfig;
 }
 
 export type CameraViewPreset = 'front' | 'back' | 'top' | 'bottom' | 'left' | 'right' | 'isometric' | 'reset';
