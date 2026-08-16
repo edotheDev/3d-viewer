@@ -164,88 +164,122 @@ export default function App() {
       const fileName = file.name;
       const ext = fileName.split('.').pop()?.toLowerCase();
 
-      // Check if it is a shader file (.gdshader, .glsl, .frag, .vert, .json)
-      if (ext === 'gdshader') {
+      // Check if it is a shader file (.gdshader, .shader, .tres, .material, .glsl, .frag, .vert, .json, .txt)
+      const isShaderExtension =
+        ext === 'gdshader' ||
+        ext === 'shader' ||
+        ext === 'tres' ||
+        ext === 'material' ||
+        ext === 'glsl' ||
+        ext === 'frag' ||
+        ext === 'vert' ||
+        ext === 'json';
+
+      if (isShaderExtension || ext === 'txt') {
         const reader = new FileReader();
         reader.onload = (e) => {
           const content = e.target?.result as string;
           if (!content) return;
-          try {
-            const shaderConfig = parseGodotShader(content, fileName.replace(/\.[^/.]+$/, ''));
+
+          // Check if it is JSON config
+          if (ext === 'json') {
+            try {
+              const parsed = JSON.parse(content);
+              if (parsed.fragmentShader || parsed.vertexShader) {
+                setSettings((prev) => ({
+                  ...prev,
+                  customShader: {
+                    id: `custom_${Date.now()}`,
+                    name: parsed.name || fileName.replace(/\.[^/.]+$/, ''),
+                    description: parsed.description || 'Imported shader config',
+                    vertexShader: parsed.vertexShader || prev.customShader.vertexShader,
+                    fragmentShader: parsed.fragmentShader || content,
+                    uniforms: parsed.uniforms || prev.customShader.uniforms,
+                    transparent: parsed.transparent ?? prev.customShader.transparent,
+                    wireframe: parsed.wireframe ?? prev.customShader.wireframe,
+                  },
+                  renderMode: 'shader',
+                }));
+                addToast({
+                  type: 'success',
+                  title: 'Shader Config Loaded',
+                  description: `Loaded ${fileName} and active in Shader Mode`,
+                });
+                return;
+              }
+            } catch {
+              // Not JSON, continue checking
+            }
+          }
+
+          // Check if it's Godot shader code, UID shader, or raw shader
+          const isGodotShader =
+            ext === 'gdshader' ||
+            ext === 'shader' ||
+            ext === 'tres' ||
+            ext === 'material' ||
+            content.includes('shader_type') ||
+            content.includes('uid://') ||
+            content.includes('void fragment(') ||
+            content.includes('void vertex(') ||
+            content.includes('render_mode');
+
+          if (isGodotShader) {
+            try {
+              const shaderConfig = parseGodotShader(content, fileName.replace(/\.[^/.]+$/, ''));
+              setSettings((prev) => ({
+                ...prev,
+                customShader: shaderConfig,
+                renderMode: 'shader',
+              }));
+              addToast({
+                type: 'success',
+                title: 'Godot Shader Loaded',
+                description: `Transpiled & running live on 3D model!`,
+              });
+              return;
+            } catch (err: any) {
+              addToast({
+                type: 'error',
+                title: 'Godot Shader Parse Error',
+                description: err?.message || 'Invalid Godot shader syntax',
+              });
+              return;
+            }
+          }
+
+          if (ext === 'vert') {
             setSettings((prev) => ({
               ...prev,
-              customShader: shaderConfig,
+              customShader: {
+                ...prev.customShader,
+                vertexShader: content,
+              },
               renderMode: 'shader',
             }));
             addToast({
               type: 'success',
-              title: 'Godot Shader Imported (.gdshader)',
-              description: `Transpiled & running live on active 3D model!`,
+              title: 'Vertex Shader Loaded',
+              description: `Loaded ${fileName} and active in Shader Mode`,
             });
-          } catch (err: any) {
-            addToast({
-              type: 'error',
-              title: 'Error Parsing .gdshader',
-              description: err?.message || 'Invalid Godot shader syntax',
-            });
+            return;
           }
-        };
-        reader.readAsText(file);
-        return;
-      }
 
-      if (ext === 'glsl' || ext === 'frag' || ext === 'vert' || ext === 'json') {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          const content = e.target?.result as string;
-          if (!content) return;
-          try {
-            if (ext === 'json') {
-              const parsed = JSON.parse(content);
-              setSettings((prev) => ({
-                ...prev,
-                customShader: {
-                  id: `custom_${Date.now()}`,
-                  name: parsed.name || fileName.replace(/\.[^/.]+$/, ''),
-                  description: parsed.description || 'Imported shader config',
-                  vertexShader: parsed.vertexShader || prev.customShader.vertexShader,
-                  fragmentShader: parsed.fragmentShader || content,
-                  uniforms: parsed.uniforms || prev.customShader.uniforms,
-                  transparent: parsed.transparent ?? prev.customShader.transparent,
-                  wireframe: parsed.wireframe ?? prev.customShader.wireframe,
-                },
-                renderMode: 'shader',
-              }));
-            } else if (ext === 'vert') {
-              setSettings((prev) => ({
-                ...prev,
-                customShader: {
-                  ...prev.customShader,
-                  vertexShader: content,
-                },
-                renderMode: 'shader',
-              }));
-            } else {
-              setSettings((prev) => ({
-                ...prev,
-                customShader: {
-                  ...prev.customShader,
-                  fragmentShader: content,
-                },
-                renderMode: 'shader',
-              }));
-            }
+          if (ext === 'frag' || ext === 'glsl' || isShaderExtension) {
+            setSettings((prev) => ({
+              ...prev,
+              customShader: {
+                ...prev.customShader,
+                fragmentShader: content,
+              },
+              renderMode: 'shader',
+            }));
             addToast({
               type: 'success',
               title: 'Custom Shader Loaded',
-              description: `Loaded ${fileName} and switched to Shader Mode`,
+              description: `Loaded ${fileName} and active in Shader Mode`,
             });
-          } catch {
-            addToast({
-              type: 'error',
-              title: 'Invalid Shader File',
-              description: 'Could not parse the shader source code.',
-            });
+            return;
           }
         };
         reader.readAsText(file);
@@ -257,7 +291,7 @@ export default function App() {
         addToast({
           type: 'error',
           title: 'Unsupported File Format',
-          description: 'Please upload a 3D model (.glb, .gltf, .fbx) or shader (.gdshader, .glsl).',
+          description: 'Please upload a 3D model (.glb, .gltf, .fbx) or shader (.gdshader, .glsl, .tres).',
         });
         return;
       }

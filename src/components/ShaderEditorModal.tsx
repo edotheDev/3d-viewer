@@ -79,7 +79,17 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
       if (!content) return;
 
       const fileName = file.name.toLowerCase();
-      if (fileName.endsWith('.gdshader')) {
+      const isGodot =
+        fileName.endsWith('.gdshader') ||
+        fileName.endsWith('.shader') ||
+        fileName.endsWith('.tres') ||
+        fileName.endsWith('.material') ||
+        content.includes('shader_type') ||
+        content.includes('uid://') ||
+        content.includes('void fragment(') ||
+        content.includes('void vertex(');
+
+      if (isGodot) {
         try {
           const config = parseGodotShader(content, file.name.replace(/\.[^/.]+$/, ''));
           setLocalFrag(config.fragmentShader);
@@ -88,12 +98,12 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
           onApplyShaderMode();
           setCompileStatus({
             success: true,
-            msg: `Transpiled & loaded Godot .gdshader "${file.name}"!`,
+            msg: `Transpiled & loaded Godot shader "${file.name}"!`,
           });
         } catch (err: any) {
           setCompileStatus({
             success: false,
-            msg: `Error parsing .gdshader: ${err?.message || 'Invalid syntax'}`,
+            msg: `Error parsing Godot shader: ${err?.message || 'Invalid syntax'}`,
           });
         }
       } else if (fileName.endsWith('.json')) {

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RenderMode, CustomShaderConfig } from '../types';
 import { getUVCheckerTexture } from './uvTexture';
 import { SHADER_PRESETS } from './shaderPresets';
+import { generateDefaultVertexShader } from './godotShaderParser';
 
 // Store original materials for each mesh to restore in 'normal' mode
 const originalMaterialMap = new WeakMap<THREE.Mesh, THREE.Material | THREE.Material[]>();
@@ -10,7 +11,6 @@ const originalMaterialMap = new WeakMap<THREE.Mesh, THREE.Material | THREE.Mater
 let clayMaterial: THREE.MeshLambertMaterial | null = null;
 let uvMaterial: THREE.MeshStandardMaterial | null = null;
 let customShaderMaterial: THREE.ShaderMaterial | null = null;
-let currentShaderId: string | null = null;
 let currentShaderCodeKey: string | null = null;
 
 function getClayMaterial(): THREE.MeshLambertMaterial {
@@ -41,7 +41,7 @@ function getUVMaterial(): THREE.MeshStandardMaterial {
  */
 export function getCustomShaderMaterial(config?: CustomShaderConfig): THREE.ShaderMaterial {
   const activeConfig = config || SHADER_PRESETS[0];
-  const codeKey = `${activeConfig.id}_${activeConfig.vertexShader.length}_${activeConfig.fragmentShader.length}_${JSON.stringify(activeConfig.uniforms)}`;
+  const codeKey = `${activeConfig.id}_${activeConfig.vertexShader.length}_${activeConfig.fragmentShader.length}_${JSON.stringify(activeConfig.uniforms)}_${activeConfig.wireframe}_${activeConfig.transparent}`;
 
   if (!customShaderMaterial || currentShaderCodeKey !== codeKey) {
     // Clean up old material if needed
@@ -59,25 +59,59 @@ export function getCustomShaderMaterial(config?: CustomShaderConfig): THREE.Shad
       u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
     };
 
+    // Inject any additional custom uniforms from config
+    if (activeConfig.uniforms) {
+      for (const [key, val] of Object.entries(activeConfig.uniforms)) {
+        if (uniforms[key] === undefined) {
+          if (typeof val === 'string' && val.startsWith('#')) {
+            uniforms[key] = { value: new THREE.Color(val) };
+          } else if (Array.isArray(val)) {
+            if (val.length === 2) uniforms[key] = { value: new THREE.Vector2(val[0], val[1]) };
+            else if (val.length === 3) uniforms[key] = { value: new THREE.Vector3(val[0], val[1], val[2]) };
+            else if (val.length === 4) uniforms[key] = { value: new THREE.Vector4(val[0], val[1], val[2], val[3]) };
+            else uniforms[key] = { value: val };
+          } else {
+            uniforms[key] = { value: val };
+          }
+        }
+      }
+    }
+
     try {
+      const vertexCode = activeConfig.vertexShader && activeConfig.vertexShader.trim().length > 0
+        ? activeConfig.vertexShader
+        : generateDefaultVertexShader();
+
+      const fragmentCode = activeConfig.fragmentShader && activeConfig.fragmentShader.trim().length > 0
+        ? activeConfig.fragmentShader
+        : SHADER_PRESETS[0].fragmentShader;
+
       customShaderMaterial = new THREE.ShaderMaterial({
-        vertexShader: activeConfig.vertexShader,
-        fragmentShader: activeConfig.fragmentShader,
+        vertexShader: vertexCode,
+        fragmentShader: fragmentCode,
         uniforms,
         wireframe: !!activeConfig.wireframe,
-        transparent: activeConfig.transparent !== false,
+        transparent: !!activeConfig.transparent,
         side: THREE.DoubleSide,
-        depthWrite: activeConfig.transparent === false,
+        depthWrite: true, // Always write depth so 3D model never vanishes or renders invisibly
+        depthTest: true,
       });
-      currentShaderId = activeConfig.id;
+
+      // Hook into onBeforeCompile or material error handling
+      customShaderMaterial.onBeforeCompile = (shader, renderer) => {
+        // Log shader setup
+      };
+
       currentShaderCodeKey = codeKey;
     } catch (err) {
-      console.error('Failed to create ShaderMaterial, falling back to basic:', err);
+      console.error('Failed to create ShaderMaterial, falling back to Hologram preset:', err);
       customShaderMaterial = new THREE.ShaderMaterial({
         vertexShader: SHADER_PRESETS[0].vertexShader,
         fragmentShader: SHADER_PRESETS[0].fragmentShader,
         uniforms,
         side: THREE.DoubleSide,
+        depthWrite: true,
+        depthTest: true,
       });
     }
   } else {
@@ -97,8 +131,19 @@ export function getCustomShaderMaterial(config?: CustomShaderConfig): THREE.Shad
     if (customShaderMaterial.uniforms.u_scale) {
       customShaderMaterial.uniforms.u_scale.value = activeConfig.uniforms?.u_scale ?? 1.0;
     }
+    if (activeConfig.uniforms) {
+      for (const [key, val] of Object.entries(activeConfig.uniforms)) {
+        if (customShaderMaterial.uniforms[key]) {
+          if (typeof val === 'string' && val.startsWith('#')) {
+            customShaderMaterial.uniforms[key].value.set(val);
+          } else {
+            customShaderMaterial.uniforms[key].value = val;
+          }
+        }
+      }
+    }
     customShaderMaterial.wireframe = !!activeConfig.wireframe;
-    customShaderMaterial.transparent = activeConfig.transparent !== false;
+    customShaderMaterial.transparent = !!activeConfig.transparent;
   }
 
   return customShaderMaterial;
