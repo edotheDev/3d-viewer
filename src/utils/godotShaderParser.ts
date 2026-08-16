@@ -45,7 +45,7 @@ export function parseGodotShader(
   // Infer default parameter values from parsed uniforms
   for (const u of uniforms) {
     const lower = u.name.toLowerCase();
-    if (lower.includes('albedo') || lower.includes('color_primary') || lower === 'color' || lower.includes('base_color')) {
+    if (lower.includes('albedo') || lower.includes('color_primary') || lower === 'color' || lower.includes('base_color') || lower.includes('town_tint')) {
       if (typeof u.defaultValue === 'string' && u.defaultValue.startsWith('#')) {
         defaultColor = u.defaultValue;
       }
@@ -217,20 +217,17 @@ function parseShaderStructure(source: string): {
 
   let globalCode = source;
 
-  // Cut out the vertex, fragment, and light functions from the source to leave global functions/variables
   const removeRanges: { start: number; end: number }[] = [];
   if (vertexInfo) removeRanges.push({ start: vertexInfo.start, end: vertexInfo.end });
   if (fragmentInfo) removeRanges.push({ start: fragmentInfo.start, end: fragmentInfo.end });
   if (lightInfo) removeRanges.push({ start: lightInfo.start, end: lightInfo.end });
 
-  // Sort ranges descending so cutting from back doesn't affect earlier indices
   removeRanges.sort((a, b) => b.start - a.start);
 
   for (const range of removeRanges) {
     globalCode = globalCode.substring(0, range.start) + '\n' + globalCode.substring(range.end);
   }
 
-  // Clean remaining global code (remove uniform lines since they will be declared uniformly at the top)
   let cleanGlobalHelpers = globalCode
     .replace(/uniform\s+[^;]+;/g, '')
     .replace(/varying\s+[^;]+;/g, '')
@@ -243,9 +240,6 @@ function parseShaderStructure(source: string): {
   };
 }
 
-/**
- * Finds a function definition and extracts start, end, and inner body handling nested braces.
- */
 function findFunction(
   source: string,
   funcName: string
@@ -283,11 +277,14 @@ varying vec2 vUv;
 varying vec3 vNormal;
 varying vec3 vPosition;
 varying vec3 vViewPosition;
+varying vec3 vWorldPosition;
 
 void main() {
   vUv = uv;
   vNormal = normalize(normalMatrix * normal);
   vPosition = position;
+  vec4 worldPos = modelMatrix * vec4(position, 1.0);
+  vWorldPosition = worldPos.xyz;
   vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
   vViewPosition = -mvPosition.xyz;
   gl_Position = projectionMatrix * mvPosition;
@@ -326,17 +323,14 @@ varying vec2 vUv;
 varying vec3 vNormal;
 varying vec3 vPosition;
 varying vec3 vViewPosition;
+varying vec3 vWorldPosition;
 
 #define PI 3.141592653589793
 #define TAU 6.283185307179586
 #define E 2.718281828459045
 
-// Helper procedural texture function if sampler2D is unbound
-vec4 textureSample(sampler2D s, vec2 uvCoord) {
-  return vec4(1.0);
-}
-#define texture(s, uv) textureSample(s, uv)
-#define textureLod(s, uv, lod) textureSample(s, uv)
+#define texture texture2D
+#define textureLod(s, uv, lod) texture2D(s, uv)
 
 ${globalHelpers}
 
@@ -372,6 +366,8 @@ void main() {
   code += `
   vNormal = normalize(normalMatrix * NORMAL);
   vPosition = VERTEX;
+  vec4 worldPos = modelMatrix * vec4(VERTEX, 1.0);
+  vWorldPosition = worldPos.xyz;
   vec4 mvPosition = modelViewMatrix * vec4(VERTEX, 1.0);
   vViewPosition = -mvPosition.xyz;
   gl_Position = projectionMatrix * mvPosition;
@@ -399,6 +395,7 @@ uniform float u_intensity;
 uniform float u_speed;
 uniform float u_scale;
 uniform vec2 u_resolution;
+uniform float u_has_texture;
 `;
 
   for (const u of declaredUniforms) {
@@ -414,20 +411,14 @@ varying vec2 vUv;
 varying vec3 vNormal;
 varying vec3 vPosition;
 varying vec3 vViewPosition;
+varying vec3 vWorldPosition;
 
 #define PI 3.141592653589793
 #define TAU 6.283185307179586
 #define E 2.718281828459045
 
-// Helper procedural texture function if sampler2D is unbound in WebGL
-vec4 textureSample(sampler2D s, vec2 uvCoord) {
-  // Returns safe procedural gradient
-  vec2 p = uvCoord * 8.0;
-  float pattern = sin(p.x) * cos(p.y);
-  return vec4(0.5 + 0.5 * pattern, 0.5, 0.8, 1.0);
-}
-#define texture(s, uv) textureSample(s, uv)
-#define textureLod(s, uv, lod) textureSample(s, uv)
+#define texture texture2D
+#define textureLod(s, uv, lod) texture2D(s, uv)
 
 ${globalHelpers}
 
@@ -443,6 +434,7 @@ void main() {
   vec4 COLOR = vec4(1.0);
   vec3 CAMERA_POSITION_WORLD = cameraPosition;
   vec3 NODE_POSITION_WORLD = vec3(0.0);
+  vec3 WORLD_POSITION = vWorldPosition;
 
   // Godot spatial output registers
   vec3 ALBEDO = u_color;
@@ -460,7 +452,9 @@ void main() {
       .replace(/\bTIME\b/g, '(u_time * u_speed)')
       .replace(/\bFRAGCOORD\b/g, 'gl_FragCoord')
       .replace(/\bCOLOR\b/g, 'COLOR')
-      .replace(/\bSCREEN_UV\b/g, '(gl_FragCoord.xy / max(u_resolution, vec2(1.0)))');
+      .replace(/\bSCREEN_UV\b/g, '(gl_FragCoord.xy / max(u_resolution, vec2(1.0)))')
+      .replace(/\(INV_VIEW_MATRIX\s*\*\s*vec4\(\s*VERTEX\s*,\s*1\.0\s*\)\)\.xyz/g, 'vWorldPosition')
+      .replace(/INV_VIEW_MATRIX\s*\*\s*vec4\(\s*VERTEX\s*,\s*1\.0\s*\)/g, 'vec4(vWorldPosition, 1.0)');
 
     code += `
   // --- Transpiled Godot fragment() body ---
@@ -476,14 +470,12 @@ void main() {
 `;
     }
   } else {
-    // Default spatial fallback visual
     code += `
   ALBEDO = mix(u_color, u_colorSecondary, 0.5 + 0.5 * sin(vPosition.y * 4.0 + u_time * u_speed));
   EMISSION = ALBEDO * 0.3 * u_intensity;
 `;
   }
 
-  // Safe Alpha and Clamping so model never disappears or renders black/invisible
   code += `
   ALPHA = clamp(ALPHA, 0.15, 1.0);
 `;
@@ -522,9 +514,6 @@ void main() {
   return code.trim();
 }
 
-/**
- * Converts Godot vec4/vec3 color definition string to Hex
- */
 function parseColorToHex(valStr: string): string | null {
   try {
     const match = valStr.match(/vec[34]\s*\(([^)]+)\)/);
@@ -537,14 +526,11 @@ function parseColorToHex(valStr: string): string | null {
       return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
     }
   } catch {
-    // Ignore error
+    // Ignore
   }
   return null;
 }
 
-/**
- * Parses vector string like vec3(1.0, 2.0, 3.0) into array/numbers
- */
 function parseVectorDefault(valStr: string, type: string): any {
   try {
     const match = valStr.match(/vec[234]\s*\(([^)]+)\)/);

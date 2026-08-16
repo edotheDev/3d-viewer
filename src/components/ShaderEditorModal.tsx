@@ -12,6 +12,10 @@ import {
   FileCode,
   Check,
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  LayoutGrid,
+  List,
 } from 'lucide-react';
 import { CustomShaderConfig } from '../types';
 import { SHADER_PRESETS, DEFAULT_VERTEX_SHADER } from '../utils/shaderPresets';
@@ -36,7 +40,9 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
   const [localFrag, setLocalFrag] = useState(shaderConfig.fragmentShader);
   const [localVert, setLocalVert] = useState(shaderConfig.vertexShader || DEFAULT_VERTEX_SHADER);
   const [compileStatus, setCompileStatus] = useState<{ success: boolean; msg?: string } | null>(null);
+  const [isGridView, setIsGridView] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const presetScrollRef = useRef<HTMLDivElement>(null);
 
   // Sync state when shaderConfig preset changes from outside
   React.useEffect(() => {
@@ -51,7 +57,14 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
       ...preset,
       uniforms: { ...preset.uniforms },
     });
-    setCompileStatus({ success: true, msg: `Loaded preset "${preset.name}"` });
+    setCompileStatus({ success: true, msg: `Loaded "${preset.name}"` });
+  };
+
+  const scrollPresets = (direction: 'left' | 'right') => {
+    if (presetScrollRef.current) {
+      const scrollAmount = direction === 'left' ? -180 : 180;
+      presetScrollRef.current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    }
   };
 
   const handleApplyCode = () => {
@@ -109,48 +122,38 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
       } else if (fileName.endsWith('.json')) {
         try {
           const parsed = JSON.parse(content);
-          if (parsed.fragmentShader) {
-            setLocalFrag(parsed.fragmentShader);
-            if (parsed.vertexShader) setLocalVert(parsed.vertexShader);
-            onUpdateShader({
-              id: `custom_${Date.now()}`,
-              name: parsed.name || file.name.replace(/\.[^/.]+$/, ''),
-              description: parsed.description || 'Imported custom shader',
-              vertexShader: parsed.vertexShader || DEFAULT_VERTEX_SHADER,
-              fragmentShader: parsed.fragmentShader,
-              uniforms: parsed.uniforms || { ...shaderConfig.uniforms },
-              transparent: parsed.transparent ?? shaderConfig.transparent,
-              wireframe: parsed.wireframe ?? shaderConfig.wireframe,
-            });
-            onApplyShaderMode();
-            setCompileStatus({ success: true, msg: `Loaded shader from ${file.name}` });
-          }
+          const config: CustomShaderConfig = {
+            id: `custom_${Date.now()}`,
+            name: parsed.name || file.name.replace(/\.[^/.]+$/, ''),
+            description: parsed.description || 'Custom Imported Shader',
+            vertexShader: parsed.vertexShader || DEFAULT_VERTEX_SHADER,
+            fragmentShader: parsed.fragmentShader || localFrag,
+            uniforms: parsed.uniforms || shaderConfig.uniforms,
+            transparent: parsed.transparent ?? shaderConfig.transparent,
+            wireframe: parsed.wireframe ?? shaderConfig.wireframe,
+          };
+          setLocalFrag(config.fragmentShader);
+          setLocalVert(config.vertexShader);
+          onUpdateShader(config);
+          onApplyShaderMode();
+          setCompileStatus({ success: true, msg: `Loaded JSON shader "${file.name}"` });
         } catch {
           setCompileStatus({ success: false, msg: 'Invalid JSON shader configuration' });
         }
       } else if (fileName.endsWith('.vert')) {
         setLocalVert(content);
-        setActiveTab('vertex');
-        onUpdateShader({
-          ...shaderConfig,
-          vertexShader: content,
-        });
+        onUpdateShader({ ...shaderConfig, vertexShader: content });
         onApplyShaderMode();
-        setCompileStatus({ success: true, msg: `Loaded vertex shader from ${file.name}` });
+        setCompileStatus({ success: true, msg: 'Updated Vertex Shader' });
       } else {
-        // Assume fragment shader (.frag, .glsl, or raw shader code)
         setLocalFrag(content);
-        setActiveTab('fragment');
-        onUpdateShader({
-          ...shaderConfig,
-          fragmentShader: content,
-        });
+        onUpdateShader({ ...shaderConfig, fragmentShader: content });
         onApplyShaderMode();
-        setCompileStatus({ success: true, msg: `Loaded fragment shader from ${file.name}` });
+        setCompileStatus({ success: true, msg: 'Updated Fragment Shader' });
       }
     };
     reader.readAsText(file);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    e.target.value = '';
   };
 
   const handleExportShader = () => {
@@ -171,7 +174,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${shaderConfig.id || 'custom'}_shader.json`;
+    a.download = `${shaderConfig.name.toLowerCase().replace(/\s+/g, '_')}_shader.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -179,6 +182,19 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
   const handleResetToDefault = () => {
     handleSelectPreset(SHADER_PRESETS[0]);
   };
+
+  // Helper to update specific uniform
+  const updateUniform = (key: string, value: any) => {
+    onUpdateShader({
+      ...shaderConfig,
+      uniforms: {
+        ...shaderConfig.uniforms,
+        [key]: value,
+      },
+    });
+  };
+
+  const isDegradeShader = shaderConfig.id === 'asset-degrade-ps2' || shaderConfig.fragmentShader.includes('texel_res');
 
   return (
     <AnimatePresence>
@@ -189,7 +205,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
           animate={{ opacity: 1, x: 0, scale: 1 }}
           exit={{ opacity: 0, x: 20, scale: 0.98 }}
           transition={{ duration: 0.2 }}
-          className="fixed top-20 right-6 z-40 w-96 md:w-[440px] p-5 rounded-3xl bg-white border border-[#E5E5E5] shadow-[0_25px_50px_rgba(0,0,0,0.12)] flex flex-col gap-4 max-h-[calc(100vh-140px)] overflow-hidden text-[#111111]"
+          className="fixed top-20 right-6 z-40 w-96 md:w-[460px] p-5 rounded-3xl bg-white border border-[#E5E5E5] shadow-[0_25px_50px_rgba(0,0,0,0.12)] flex flex-col gap-3.5 max-h-[calc(100vh-120px)] overflow-hidden text-[#111111]"
         >
           {/* Header */}
           <div className="flex items-center justify-between pb-3 border-b border-[#E5E5E5]">
@@ -202,7 +218,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
                   GLSL Shader Studio
                 </h2>
                 <span className="text-[10px] font-inter text-[#888888]">
-                  Custom real-time vertex & fragment engine
+                  Real-time PS2 Degrade & Custom GLSL Engine
                 </span>
               </div>
             </div>
@@ -215,32 +231,95 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
             </button>
           </div>
 
-          {/* Preset Selector */}
+          {/* Preset Selector with Smooth Navigation & Grid Toggle */}
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between text-[10px] font-acid uppercase tracking-wider text-[#888888] font-bold">
-              <span>Curated Presets</span>
-              <span className="text-[9px] font-mono text-[#111111] font-normal">
-                {SHADER_PRESETS.length} available
-              </span>
-            </div>
-            <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-              {SHADER_PRESETS.map((preset) => {
-                const isSelected = shaderConfig.id === preset.id;
-                return (
+              <div className="flex items-center gap-1.5">
+                <span>Presets ({SHADER_PRESETS.length})</span>
+                {isDegradeShader && (
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[9px] font-mono font-bold lowercase">
+                    ps2 active
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setIsGridView(!isGridView)}
+                  className="p-1 rounded text-[#888888] hover:text-[#111111] hover:bg-neutral-100 transition-colors"
+                  title={isGridView ? 'Switch to horizontal bar' : 'Switch to full grid view'}
+                >
+                  {isGridView ? <List className="w-3.5 h-3.5" /> : <LayoutGrid className="w-3.5 h-3.5" />}
+                </button>
+                <div className="flex items-center gap-0.5">
                   <button
-                    key={preset.id}
-                    onClick={() => handleSelectPreset(preset)}
-                    className={`px-3 py-1.5 rounded-full text-[11px] font-acid uppercase tracking-wider whitespace-nowrap transition-all border shrink-0 ${
-                      isSelected
-                        ? 'bg-[#111111] text-white border-[#111111] font-bold shadow-xs'
-                        : 'bg-[#F7F7F7] text-[#111111] border-[#E5E5E5] hover:border-[#111111]'
-                    }`}
+                    onClick={() => scrollPresets('left')}
+                    className="p-1 rounded-full text-[#888888] hover:text-[#111111] hover:bg-neutral-100 transition-colors"
+                    title="Previous presets"
                   >
-                    {preset.name}
+                    <ChevronLeft className="w-3.5 h-3.5" />
                   </button>
-                );
-              })}
+                  <button
+                    onClick={() => scrollPresets('right')}
+                    className="p-1 rounded-full text-[#888888] hover:text-[#111111] hover:bg-neutral-100 transition-colors"
+                    title="Next presets"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
             </div>
+
+            {/* Presets List */}
+            {isGridView ? (
+              <div className="grid grid-cols-2 gap-1.5 max-h-36 overflow-y-auto p-1 rounded-2xl bg-neutral-50 border border-[#E5E5E5]">
+                {SHADER_PRESETS.map((preset) => {
+                  const isSelected = shaderConfig.id === preset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      onClick={() => handleSelectPreset(preset)}
+                      className={`p-2 rounded-xl text-left text-[11px] font-acid uppercase tracking-wider transition-all border flex flex-col gap-0.5 ${
+                        isSelected
+                          ? 'bg-[#111111] text-white border-[#111111] font-bold shadow-xs'
+                          : 'bg-white text-[#111111] border-[#E5E5E5] hover:border-[#111111]'
+                      }`}
+                    >
+                      <span className="truncate">{preset.name}</span>
+                      <span className={`text-[9px] font-inter line-clamp-1 normal-case ${isSelected ? 'text-neutral-300' : 'text-[#888888]'}`}>
+                        {preset.description}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div
+                ref={presetScrollRef}
+                onWheel={(e) => {
+                  if (presetScrollRef.current) {
+                    presetScrollRef.current.scrollLeft += e.deltaY;
+                  }
+                }}
+                className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-thin scrollbar-thumb-neutral-300"
+              >
+                {SHADER_PRESETS.map((preset) => {
+                  const isSelected = shaderConfig.id === preset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      onClick={() => handleSelectPreset(preset)}
+                      className={`px-3 py-1.5 rounded-full text-[11px] font-acid uppercase tracking-wider whitespace-nowrap transition-all border shrink-0 ${
+                        isSelected
+                          ? 'bg-[#111111] text-white border-[#111111] font-bold shadow-xs'
+                          : 'bg-[#F7F7F7] text-[#111111] border-[#E5E5E5] hover:border-[#111111]'
+                      }`}
+                    >
+                      {preset.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Navigation Tabs */}
@@ -281,7 +360,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
           </div>
 
           {/* Tab Content */}
-          <div className="flex-1 overflow-y-auto flex flex-col gap-3 min-h-[220px]">
+          <div className="flex-1 overflow-y-auto flex flex-col gap-3 min-h-[220px] max-h-[360px] pr-1">
             {activeTab === 'fragment' && (
               <div className="flex flex-col gap-1.5 h-full">
                 <div className="flex items-center justify-between text-[10px] font-acid uppercase tracking-wider text-[#888888]">
@@ -309,29 +388,120 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
                   onChange={(e) => setLocalVert(e.target.value)}
                   placeholder="// Enter GLSL vertex code..."
                   spellCheck={false}
-                  className="w-full h-56 p-3 rounded-2xl bg-[#181818] text-[#a78bfa] font-mono text-xs leading-relaxed resize-none border border-[#27272a] focus:outline-none focus:border-[#a78bfa] focus:ring-1 focus:ring-[#a78bfa] select-text"
+                  className="w-full h-56 p-3 rounded-2xl bg-[#181818] text-[#4ade80] font-mono text-xs leading-relaxed resize-none border border-[#27272a] focus:outline-none focus:border-[#4ade80] focus:ring-1 focus:ring-[#4ade80] select-text"
                 />
               </div>
             )}
 
             {activeTab === 'uniforms' && (
-              <div className="flex flex-col gap-3 text-xs font-inter">
-                {/* Color Uniforms */}
+              <div className="flex flex-col gap-3">
+                {/* PS2 Degrade Controls (If active preset is Degrade) */}
+                {isDegradeShader && (
+                  <div className="p-3.5 rounded-2xl bg-amber-50/50 border border-amber-200/70 flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-acid uppercase tracking-wider text-amber-900 font-bold">
+                        PS2 Degrade Controls
+                      </span>
+                      <span className="text-[9px] font-mono text-amber-700 font-medium">Silent Hill Aesthetic</span>
+                    </div>
+
+                    {/* Virtual Texel Resolution */}
+                    <div className="flex flex-col gap-1">
+                      <div className="flex justify-between items-center text-[10px] font-mono">
+                        <span className="text-neutral-600 font-bold uppercase">Texel Grid (texel_res)</span>
+                        <span className="text-[#111111] font-semibold">{shaderConfig.uniforms.texel_res || 220} px</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="32"
+                        max="512"
+                        step="8"
+                        value={shaderConfig.uniforms.texel_res || 220}
+                        onChange={(e) => updateUniform('texel_res', parseFloat(e.target.value))}
+                        className="w-full accent-amber-600 cursor-pointer"
+                      />
+                      <span className="text-[9px] text-neutral-500 font-inter">Lower value = chunkier retro texel resolution</span>
+                    </div>
+
+                    {/* Posterize Levels */}
+                    <div className="flex flex-col gap-1">
+                      <div className="flex justify-between items-center text-[10px] font-mono">
+                        <span className="text-neutral-600 font-bold uppercase">Color Posterize (levels)</span>
+                        <span className="text-[#111111] font-semibold">{shaderConfig.uniforms.levels || 7} steps</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="2"
+                        max="24"
+                        step="1"
+                        value={shaderConfig.uniforms.levels || 7}
+                        onChange={(e) => updateUniform('levels', parseFloat(e.target.value))}
+                        className="w-full accent-amber-600 cursor-pointer"
+                      />
+                    </div>
+
+                    {/* Town Tint & Saturation */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[9px] font-mono text-neutral-600 font-bold uppercase">Town Tint</span>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="color"
+                            value={shaderConfig.uniforms.town_tint || '#9ea8ad'}
+                            onChange={(e) => updateUniform('town_tint', e.target.value)}
+                            className="w-7 h-7 rounded cursor-pointer border border-[#E5E5E5] bg-white"
+                          />
+                          <span className="font-mono text-[10px] uppercase">{shaderConfig.uniforms.town_tint || '#9EA8AD'}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <div className="flex justify-between items-center text-[9px] font-mono">
+                          <span className="text-neutral-600 font-bold uppercase">Saturation</span>
+                          <span className="font-semibold">{Number(shaderConfig.uniforms.saturation ?? 0.62).toFixed(2)}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0.0"
+                          max="1.0"
+                          step="0.05"
+                          value={shaderConfig.uniforms.saturation ?? 0.62}
+                          onChange={(e) => updateUniform('saturation', parseFloat(e.target.value))}
+                          className="w-full accent-amber-600 cursor-pointer"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Grime Amount */}
+                    <div className="flex flex-col gap-1">
+                      <div className="flex justify-between items-center text-[10px] font-mono">
+                        <span className="text-neutral-600 font-bold uppercase">World Grime (grime_amount)</span>
+                        <span className="text-[#111111] font-semibold">{Number(shaderConfig.uniforms.grime_amount ?? 0.34).toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="1.0"
+                        step="0.02"
+                        value={shaderConfig.uniforms.grime_amount ?? 0.34}
+                        onChange={(e) => updateUniform('grime_amount', parseFloat(e.target.value))}
+                        className="w-full accent-amber-600 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Color Pickers */}
                 <div className="grid grid-cols-2 gap-2">
                   <div className="p-3 rounded-2xl bg-[#F7F7F7] border border-[#E5E5E5] flex flex-col gap-2">
                     <span className="text-[10px] font-acid uppercase tracking-wider text-[#888888] font-bold">
-                      Primary Tint (u_color)
+                      Primary (u_color)
                     </span>
                     <div className="flex items-center gap-2">
                       <input
                         type="color"
                         value={shaderConfig.uniforms.u_color}
-                        onChange={(e) =>
-                          onUpdateShader({
-                            ...shaderConfig,
-                            uniforms: { ...shaderConfig.uniforms, u_color: e.target.value },
-                          })
-                        }
+                        onChange={(e) => updateUniform('u_color', e.target.value)}
                         className="w-8 h-8 rounded-lg cursor-pointer border border-[#E5E5E5] p-0.5 bg-white"
                       />
                       <span className="font-mono text-xs text-[#111111] uppercase font-medium">
@@ -348,12 +518,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
                       <input
                         type="color"
                         value={shaderConfig.uniforms.u_colorSecondary}
-                        onChange={(e) =>
-                          onUpdateShader({
-                            ...shaderConfig,
-                            uniforms: { ...shaderConfig.uniforms, u_colorSecondary: e.target.value },
-                          })
-                        }
+                        onChange={(e) => updateUniform('u_colorSecondary', e.target.value)}
                         className="w-8 h-8 rounded-lg cursor-pointer border border-[#E5E5E5] p-0.5 bg-white"
                       />
                       <span className="font-mono text-xs text-[#111111] uppercase font-medium">
@@ -367,7 +532,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
                 <div className="p-3 rounded-2xl bg-[#F7F7F7] border border-[#E5E5E5] flex flex-col gap-1.5">
                   <div className="flex justify-between items-center">
                     <span className="text-[10px] font-acid uppercase tracking-wider text-[#888888] font-bold">
-                      Emission & Intensity (u_intensity)
+                      Intensity & Lighting (u_intensity)
                     </span>
                     <span className="font-mono text-xs text-[#111111] font-semibold">
                       {shaderConfig.uniforms.u_intensity.toFixed(2)}x
@@ -379,12 +544,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
                     max="3.0"
                     step="0.05"
                     value={shaderConfig.uniforms.u_intensity}
-                    onChange={(e) =>
-                      onUpdateShader({
-                        ...shaderConfig,
-                        uniforms: { ...shaderConfig.uniforms, u_intensity: parseFloat(e.target.value) },
-                      })
-                    }
+                    onChange={(e) => updateUniform('u_intensity', parseFloat(e.target.value))}
                     className="w-full accent-[#111111] cursor-pointer"
                   />
                 </div>
@@ -393,7 +553,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
                 <div className="p-3 rounded-2xl bg-[#F7F7F7] border border-[#E5E5E5] flex flex-col gap-1.5">
                   <div className="flex justify-between items-center">
                     <span className="text-[10px] font-acid uppercase tracking-wider text-[#888888] font-bold">
-                      Oscillation Speed (u_speed)
+                      Animation Speed (u_speed)
                     </span>
                     <span className="font-mono text-xs text-[#111111] font-semibold">
                       {shaderConfig.uniforms.u_speed.toFixed(2)}x
@@ -405,12 +565,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
                     max="3.0"
                     step="0.1"
                     value={shaderConfig.uniforms.u_speed}
-                    onChange={(e) =>
-                      onUpdateShader({
-                        ...shaderConfig,
-                        uniforms: { ...shaderConfig.uniforms, u_speed: parseFloat(e.target.value) },
-                      })
-                    }
+                    onChange={(e) => updateUniform('u_speed', parseFloat(e.target.value))}
                     className="w-full accent-[#111111] cursor-pointer"
                   />
                 </div>
@@ -419,7 +574,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
                 <div className="p-3 rounded-2xl bg-[#F7F7F7] border border-[#E5E5E5] flex flex-col gap-1.5">
                   <div className="flex justify-between items-center">
                     <span className="text-[10px] font-acid uppercase tracking-wider text-[#888888] font-bold">
-                      Pattern Frequency (u_scale)
+                      Frequency Scale (u_scale)
                     </span>
                     <span className="font-mono text-xs text-[#111111] font-semibold">
                       {shaderConfig.uniforms.u_scale.toFixed(2)}x
@@ -431,12 +586,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
                     max="4.0"
                     step="0.1"
                     value={shaderConfig.uniforms.u_scale}
-                    onChange={(e) =>
-                      onUpdateShader({
-                        ...shaderConfig,
-                        uniforms: { ...shaderConfig.uniforms, u_scale: parseFloat(e.target.value) },
-                      })
-                    }
+                    onChange={(e) => updateUniform('u_scale', parseFloat(e.target.value))}
                     className="w-full accent-[#111111] cursor-pointer"
                   />
                 </div>
@@ -523,7 +673,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
                 type="file"
                 ref={fileInputRef}
                 onChange={handleFileUpload}
-                accept=".gdshader,.glsl,.frag,.vert,.json,.txt"
+                accept=".gdshader,.shader,.tres,.material,.glsl,.frag,.vert,.json,.txt"
                 className="hidden"
               />
               <button
@@ -531,7 +681,7 @@ export const ShaderEditorModal: React.FC<ShaderEditorModalProps> = ({
                 className="flex-1 py-2 px-3 rounded-full bg-white border border-[#E5E5E5] text-[#111111] font-acid text-[11px] uppercase tracking-wider hover:border-[#111111] transition-all flex items-center justify-center gap-1.5"
               >
                 <Upload className="w-3.5 h-3.5" />
-                <span>Load Shader (.gdshader/.glsl/.json)</span>
+                <span>Load Shader (.gdshader/.glsl/.tres)</span>
               </button>
 
               <button

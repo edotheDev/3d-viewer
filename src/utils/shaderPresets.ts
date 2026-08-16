@@ -9,11 +9,14 @@ varying vec3 vNormal;
 varying vec3 vPosition;
 varying vec2 vUv;
 varying vec3 vViewPosition;
+varying vec3 vWorldPosition;
 
 void main() {
   vNormal = normalize(normalMatrix * normal);
   vUv = uv;
   vPosition = position;
+  vec4 worldPos = modelMatrix * vec4(position, 1.0);
+  vWorldPosition = worldPos.xyz;
   
   vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
   vViewPosition = -mvPosition.xyz;
@@ -22,6 +25,187 @@ void main() {
 `;
 
 export const SHADER_PRESETS: CustomShaderConfig[] = [
+  {
+    id: 'asset-degrade-ps2',
+    name: 'Asset Degrade (PS2 Low-Fi)',
+    description: 'Silent Hill / PS2 retro texture degrade with virtual texel quantization, color posterization, world grime & ground dampness.',
+    vertexShader: `uniform float u_time;
+uniform float u_speed;
+uniform float u_scale;
+uniform float u_intensity;
+
+varying vec3 vNormal;
+varying vec3 vPosition;
+varying vec2 vUv;
+varying vec3 vViewPosition;
+varying vec3 vWorldPosition;
+
+void main() {
+  vNormal = normalize(normalMatrix * normal);
+  vUv = uv;
+  vPosition = position;
+  vec4 worldPos = modelMatrix * vec4(position, 1.0);
+  vWorldPosition = worldPos.xyz;
+  
+  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+  vViewPosition = -mvPosition.xyz;
+  gl_Position = projectionMatrix * mvPosition;
+}
+`,
+    fragmentShader: `uniform float u_time;
+uniform vec3 u_color;
+uniform vec3 u_colorSecondary;
+uniform float u_intensity;
+uniform float u_speed;
+uniform float u_scale;
+uniform vec2 u_resolution;
+
+// Degrade Texture Uniforms
+uniform sampler2D albedo_tex;
+uniform float u_has_texture;
+uniform float texel_res;
+uniform float levels;
+uniform float saturation;
+uniform vec3 town_tint;
+uniform float tint_amount;
+uniform float value_lift;
+uniform float grime_amount;
+uniform float grime_scale;
+uniform float damp_rise;
+uniform float rough_base;
+
+varying vec3 vNormal;
+varying vec3 vPosition;
+varying vec2 vUv;
+varying vec3 vViewPosition;
+varying vec3 vWorldPosition;
+
+#define PI 3.141592653589793
+
+float h21(vec2 p) {
+  return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+float vnoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = h21(i);
+  float b = h21(i + vec2(1.0, 0.0));
+  float c = h21(i + vec2(0.0, 1.0));
+  float d = h21(i + vec2(1.0, 1.0));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+const mat2 ROT = mat2(vec2(0.857, 0.515), vec2(-0.515, 0.857));
+
+float fbm(vec2 p) {
+  float v = 0.0;
+  float amp = 0.5;
+  for (int i = 0; i < 4; i++) {
+    v += vnoise(p) * amp;
+    p = ROT * p * 2.17;
+    amp *= 0.5;
+  }
+  return v;
+}
+
+// 4x4 Bayer Dither Matrix for authentic PS2 / CRT ordered dithering
+float bayer4(vec2 p) {
+  vec2 b = mod(floor(p), 4.0);
+  int x = int(b.x);
+  int y = int(b.y);
+  float d = 0.0;
+  if (x == 0 && y == 0) d = 0.0/16.0;
+  else if (x == 2 && y == 0) d = 8.0/16.0;
+  else if (x == 0 && y == 2) d = 12.0/16.0;
+  else if (x == 2 && y == 2) d = 4.0/16.0;
+  else if (x == 1 && y == 0) d = 2.0/16.0;
+  else if (x == 3 && y == 0) d = 10.0/16.0;
+  else if (x == 1 && y == 2) d = 14.0/16.0;
+  else if (x == 3 && y == 2) d = 6.0/16.0;
+  else if (x == 0 && y == 1) d = 3.0/16.0;
+  else if (x == 2 && y == 1) d = 11.0/16.0;
+  else if (x == 0 && y == 3) d = 15.0/16.0;
+  else if (x == 2 && y == 3) d = 7.0/16.0;
+  else if (x == 1 && y == 1) d = 1.0/16.0;
+  else if (x == 3 && y == 1) d = 9.0/16.0;
+  else if (x == 1 && y == 3) d = 13.0/16.0;
+  else d = 5.0/16.0;
+  return d - 0.5;
+}
+
+void main() {
+  vec3 normal = normalize(vNormal);
+  vec3 viewDir = normalize(vViewPosition);
+
+  // A. CHUNKY VIRTUAL TEXEL GRID
+  float activeTexelRes = max(texel_res * u_scale, 24.0);
+  vec2 uv = (floor(vUv * activeTexelRes) + 0.5) / activeTexelRes;
+  
+  vec3 col;
+  if (u_has_texture > 0.5) {
+    vec4 tex = texture2D(albedo_tex, uv);
+    col = tex.rgb;
+  } else {
+    // Procedural weathered architectural texture if model has no diffuse map
+    vec2 p = uv * 40.0;
+    float planks = sin(p.y * 3.14159 * 2.0);
+    float grain = vnoise(p * vec2(0.2, 4.0));
+    float basePattern = mix(0.7, 1.1, planks * 0.15 + grain * 0.25);
+    col = u_color * basePattern;
+  }
+
+  // B. POSTERISE (Colour steps per channel)
+  float activeLevels = max(levels, 2.0);
+  col = floor(col * activeLevels + 0.5) / activeLevels;
+
+  // C. PALETTE AGREEMENT / TOWN TINT (Silent Hill Overcast Tone)
+  float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
+  col = mix(vec3(l), col, saturation);
+  col = mix(col, l * town_tint * 1.55, tint_amount);
+  col += value_lift;
+
+  // D. WORLD SPACE GRIME
+  vec3 wp = vWorldPosition;
+  float g = fbm(wp.xz * grime_scale + wp.y * 0.15);
+  col *= 1.0 - (g - 0.5) * grime_amount;
+
+  // Damp rising out of ground
+  float damp = 1.0 - smoothstep(0.0, damp_rise, wp.y - 0.2);
+  col *= 1.0 - damp * 0.22;
+
+  // Discrete directional PS2 Lambertian lighting
+  vec3 lightDir = normalize(vec3(0.5, 1.2, 0.7));
+  float NdotL = max(dot(normal, lightDir), 0.0) * 0.75 + 0.25;
+  
+  // Retro 4x4 dither blend to break smooth shading
+  float dither = bayer4(gl_FragCoord.xy) * 0.04;
+  col = col * NdotL + vec3(dither);
+
+  col = max(col * u_intensity, vec3(0.0));
+  gl_FragColor = vec4(col, 1.0);
+}
+`,
+    uniforms: {
+      u_color: '#d4d8db',
+      u_colorSecondary: '#8a9499',
+      u_intensity: 1.0,
+      u_speed: 1.0,
+      u_scale: 1.0,
+      texel_res: 220.0,
+      levels: 7.0,
+      saturation: 0.62,
+      town_tint: '#9ea8ad',
+      tint_amount: 0.20,
+      value_lift: -0.02,
+      grime_amount: 0.34,
+      grime_scale: 0.55,
+      damp_rise: 2.6,
+      rough_base: 0.88,
+    },
+    transparent: false,
+  },
   {
     id: 'hologram',
     name: 'Hologram Grid',

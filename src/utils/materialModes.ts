@@ -7,15 +7,44 @@ import { generateDefaultVertexShader } from './godotShaderParser';
 // Store original materials for each mesh to restore in 'normal' mode
 const originalMaterialMap = new WeakMap<THREE.Mesh, THREE.Material | THREE.Material[]>();
 
+// Track all active shader materials applied to meshes for uniform animation (e.g. u_time)
+const activeShaderMaterials = new Set<THREE.ShaderMaterial>();
+
 // Cached reusable materials for efficiency
 let clayMaterial: THREE.MeshLambertMaterial | null = null;
 let uvMaterial: THREE.MeshStandardMaterial | null = null;
-let customShaderMaterial: THREE.ShaderMaterial | null = null;
-let currentShaderCodeKey: string | null = null;
+let fallbackTexture: THREE.CanvasTexture | null = null;
+
+/**
+ * Creates a safe 512x512 fallback texture if a mesh does not have its own diffuse map.
+ */
+function getFallbackTexture(): THREE.CanvasTexture {
+  if (!fallbackTexture) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+    
+    // Draw neutral building / architectural surface with subtle grain
+    ctx.fillStyle = '#c8ced2';
+    ctx.fillRect(0, 0, 512, 512);
+
+    for (let y = 0; y < 512; y += 32) {
+      ctx.fillStyle = y % 64 === 0 ? '#b4bac0' : '#d2d7dc';
+      ctx.fillRect(0, y, 512, 30);
+      ctx.fillStyle = '#8a9299';
+      ctx.fillRect(0, y + 30, 512, 2);
+    }
+
+    fallbackTexture = new THREE.CanvasTexture(canvas);
+    fallbackTexture.wrapS = THREE.RepeatWrapping;
+    fallbackTexture.wrapT = THREE.RepeatWrapping;
+  }
+  return fallbackTexture;
+}
 
 function getClayMaterial(): THREE.MeshLambertMaterial {
   if (!clayMaterial) {
-    // Pure solid sculpt view without reflections, specular highlights, or env map
     clayMaterial = new THREE.MeshLambertMaterial({
       color: 0xdedee0,
       side: THREE.DoubleSide,
@@ -37,124 +66,103 @@ function getUVMaterial(): THREE.MeshStandardMaterial {
 }
 
 /**
- * Creates or updates a THREE.ShaderMaterial for the given CustomShaderConfig
+ * Creates a THREE.ShaderMaterial configured for a specific mesh and shader config.
  */
-export function getCustomShaderMaterial(config?: CustomShaderConfig): THREE.ShaderMaterial {
+export function createShaderMaterialForMesh(
+  config: CustomShaderConfig,
+  meshTexture?: THREE.Texture | null,
+  meshColor?: THREE.Color
+): THREE.ShaderMaterial {
   const activeConfig = config || SHADER_PRESETS[0];
-  const codeKey = `${activeConfig.id}_${activeConfig.vertexShader.length}_${activeConfig.fragmentShader.length}_${JSON.stringify(activeConfig.uniforms)}_${activeConfig.wireframe}_${activeConfig.transparent}`;
 
-  if (!customShaderMaterial || currentShaderCodeKey !== codeKey) {
-    // Clean up old material if needed
-    if (customShaderMaterial) {
-      customShaderMaterial.dispose();
-    }
+  const hasTexture = !!meshTexture;
+  const boundTexture = meshTexture || getFallbackTexture();
 
-    const uniforms: Record<string, { value: any }> = {
-      u_time: { value: 0 },
-      u_color: { value: new THREE.Color(activeConfig.uniforms?.u_color || '#00f0ff') },
-      u_colorSecondary: { value: new THREE.Color(activeConfig.uniforms?.u_colorSecondary || '#8b5cf6') },
-      u_intensity: { value: activeConfig.uniforms?.u_intensity ?? 1.0 },
-      u_speed: { value: activeConfig.uniforms?.u_speed ?? 1.0 },
-      u_scale: { value: activeConfig.uniforms?.u_scale ?? 1.0 },
-      u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
-    };
+  const uniforms: Record<string, { value: any }> = {
+    u_time: { value: 0 },
+    u_color: { value: new THREE.Color(activeConfig.uniforms?.u_color || meshColor?.getHexString() || '#d4d8db') },
+    u_colorSecondary: { value: new THREE.Color(activeConfig.uniforms?.u_colorSecondary || '#8a9499') },
+    u_intensity: { value: activeConfig.uniforms?.u_intensity ?? 1.0 },
+    u_speed: { value: activeConfig.uniforms?.u_speed ?? 1.0 },
+    u_scale: { value: activeConfig.uniforms?.u_scale ?? 1.0 },
+    u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+    albedo_tex: { value: boundTexture },
+    normal_tex: { value: boundTexture },
+    u_has_texture: { value: hasTexture ? 1.0 : 0.0 },
+    texel_res: { value: activeConfig.uniforms?.texel_res ?? 220.0 },
+    levels: { value: activeConfig.uniforms?.levels ?? 7.0 },
+    saturation: { value: activeConfig.uniforms?.saturation ?? 0.62 },
+    town_tint: { value: new THREE.Color(activeConfig.uniforms?.town_tint || '#9ea8ad') },
+    tint_amount: { value: activeConfig.uniforms?.tint_amount ?? 0.20 },
+    value_lift: { value: activeConfig.uniforms?.value_lift ?? -0.02 },
+    grime_amount: { value: activeConfig.uniforms?.grime_amount ?? 0.34 },
+    grime_scale: { value: activeConfig.uniforms?.grime_scale ?? 0.55 },
+    damp_rise: { value: activeConfig.uniforms?.damp_rise ?? 2.6 },
+    rough_base: { value: activeConfig.uniforms?.rough_base ?? 0.88 },
+  };
 
-    // Inject any additional custom uniforms from config
-    if (activeConfig.uniforms) {
-      for (const [key, val] of Object.entries(activeConfig.uniforms)) {
-        if (uniforms[key] === undefined) {
-          if (typeof val === 'string' && val.startsWith('#')) {
-            uniforms[key] = { value: new THREE.Color(val) };
-          } else if (Array.isArray(val)) {
-            if (val.length === 2) uniforms[key] = { value: new THREE.Vector2(val[0], val[1]) };
-            else if (val.length === 3) uniforms[key] = { value: new THREE.Vector3(val[0], val[1], val[2]) };
-            else if (val.length === 4) uniforms[key] = { value: new THREE.Vector4(val[0], val[1], val[2], val[3]) };
-            else uniforms[key] = { value: val };
-          } else {
-            uniforms[key] = { value: val };
-          }
+  // Inject any additional custom uniforms from config
+  if (activeConfig.uniforms) {
+    for (const [key, val] of Object.entries(activeConfig.uniforms)) {
+      if (uniforms[key] === undefined) {
+        if (typeof val === 'string' && val.startsWith('#')) {
+          uniforms[key] = { value: new THREE.Color(val) };
+        } else if (Array.isArray(val)) {
+          if (val.length === 2) uniforms[key] = { value: new THREE.Vector2(val[0], val[1]) };
+          else if (val.length === 3) uniforms[key] = { value: new THREE.Vector3(val[0], val[1], val[2]) };
+          else if (val.length === 4) uniforms[key] = { value: new THREE.Vector4(val[0], val[1], val[2], val[3]) };
+          else uniforms[key] = { value: val };
+        } else {
+          uniforms[key] = { value: val };
         }
       }
     }
-
-    try {
-      const vertexCode = activeConfig.vertexShader && activeConfig.vertexShader.trim().length > 0
-        ? activeConfig.vertexShader
-        : generateDefaultVertexShader();
-
-      const fragmentCode = activeConfig.fragmentShader && activeConfig.fragmentShader.trim().length > 0
-        ? activeConfig.fragmentShader
-        : SHADER_PRESETS[0].fragmentShader;
-
-      customShaderMaterial = new THREE.ShaderMaterial({
-        vertexShader: vertexCode,
-        fragmentShader: fragmentCode,
-        uniforms,
-        wireframe: !!activeConfig.wireframe,
-        transparent: !!activeConfig.transparent,
-        side: THREE.DoubleSide,
-        depthWrite: true, // Always write depth so 3D model never vanishes or renders invisibly
-        depthTest: true,
-      });
-
-      // Hook into onBeforeCompile or material error handling
-      customShaderMaterial.onBeforeCompile = (shader, renderer) => {
-        // Log shader setup
-      };
-
-      currentShaderCodeKey = codeKey;
-    } catch (err) {
-      console.error('Failed to create ShaderMaterial, falling back to Hologram preset:', err);
-      customShaderMaterial = new THREE.ShaderMaterial({
-        vertexShader: SHADER_PRESETS[0].vertexShader,
-        fragmentShader: SHADER_PRESETS[0].fragmentShader,
-        uniforms,
-        side: THREE.DoubleSide,
-        depthWrite: true,
-        depthTest: true,
-      });
-    }
-  } else {
-    // Update uniforms values if material exists
-    if (customShaderMaterial.uniforms.u_color) {
-      customShaderMaterial.uniforms.u_color.value.set(activeConfig.uniforms?.u_color || '#00f0ff');
-    }
-    if (customShaderMaterial.uniforms.u_colorSecondary) {
-      customShaderMaterial.uniforms.u_colorSecondary.value.set(activeConfig.uniforms?.u_colorSecondary || '#8b5cf6');
-    }
-    if (customShaderMaterial.uniforms.u_intensity) {
-      customShaderMaterial.uniforms.u_intensity.value = activeConfig.uniforms?.u_intensity ?? 1.0;
-    }
-    if (customShaderMaterial.uniforms.u_speed) {
-      customShaderMaterial.uniforms.u_speed.value = activeConfig.uniforms?.u_speed ?? 1.0;
-    }
-    if (customShaderMaterial.uniforms.u_scale) {
-      customShaderMaterial.uniforms.u_scale.value = activeConfig.uniforms?.u_scale ?? 1.0;
-    }
-    if (activeConfig.uniforms) {
-      for (const [key, val] of Object.entries(activeConfig.uniforms)) {
-        if (customShaderMaterial.uniforms[key]) {
-          if (typeof val === 'string' && val.startsWith('#')) {
-            customShaderMaterial.uniforms[key].value.set(val);
-          } else {
-            customShaderMaterial.uniforms[key].value = val;
-          }
-        }
-      }
-    }
-    customShaderMaterial.wireframe = !!activeConfig.wireframe;
-    customShaderMaterial.transparent = !!activeConfig.transparent;
   }
 
-  return customShaderMaterial;
+  const vertexCode = activeConfig.vertexShader && activeConfig.vertexShader.trim().length > 0
+    ? activeConfig.vertexShader
+    : generateDefaultVertexShader();
+
+  const fragmentCode = activeConfig.fragmentShader && activeConfig.fragmentShader.trim().length > 0
+    ? activeConfig.fragmentShader
+    : SHADER_PRESETS[0].fragmentShader;
+
+  try {
+    const mat = new THREE.ShaderMaterial({
+      vertexShader: vertexCode,
+      fragmentShader: fragmentCode,
+      uniforms,
+      wireframe: !!activeConfig.wireframe,
+      transparent: !!activeConfig.transparent,
+      side: THREE.DoubleSide,
+      depthWrite: true,
+      depthTest: true,
+    });
+    activeShaderMaterials.add(mat);
+    return mat;
+  } catch (err) {
+    console.error('Failed to create ShaderMaterial, falling back to default:', err);
+    const fallbackMat = new THREE.ShaderMaterial({
+      vertexShader: SHADER_PRESETS[0].vertexShader,
+      fragmentShader: SHADER_PRESETS[0].fragmentShader,
+      uniforms,
+      side: THREE.DoubleSide,
+      depthWrite: true,
+      depthTest: true,
+    });
+    activeShaderMaterials.add(fallbackMat);
+    return fallbackMat;
+  }
 }
 
 /**
- * Updates dynamic uniforms like u_time every frame
+ * Updates dynamic uniforms like u_time every frame across all active meshes
  */
 export function updateActiveShaderTime(elapsedTime: number) {
-  if (customShaderMaterial && customShaderMaterial.uniforms.u_time) {
-    customShaderMaterial.uniforms.u_time.value = elapsedTime;
+  for (const mat of activeShaderMaterials) {
+    if (mat.uniforms && mat.uniforms.u_time) {
+      mat.uniforms.u_time.value = elapsedTime;
+    }
   }
 }
 
@@ -184,8 +192,10 @@ export function applyRenderMode(
   }
 ) {
   cacheOriginalMaterials(root);
+  activeShaderMaterials.clear();
 
   const wireColor = options?.wireframeColor || '#111111';
+  const activeShaderConfig = options?.customShader || SHADER_PRESETS[0];
 
   root.traverse((child) => {
     if ((child as THREE.Mesh).isMesh) {
@@ -195,7 +205,6 @@ export function applyRenderMode(
 
       switch (mode) {
         case 'normal': {
-          // Restore original PBR materials
           mesh.material = originalMat;
           mesh.castShadow = true;
           mesh.receiveShadow = true;
@@ -203,7 +212,6 @@ export function applyRenderMode(
         }
 
         case 'clay': {
-          // Pure solid sculpt view without reflections, specular highlights, or shadows
           mesh.material = getClayMaterial();
           mesh.castShadow = false;
           mesh.receiveShadow = false;
@@ -211,7 +219,6 @@ export function applyRenderMode(
         }
 
         case 'wireframe': {
-          // Crisp wireframe material
           if (Array.isArray(originalMat)) {
             mesh.material = originalMat.map(
               () =>
@@ -236,7 +243,6 @@ export function applyRenderMode(
         }
 
         case 'albedo': {
-          // Unlit base color map only (MeshBasicMaterial)
           if (Array.isArray(originalMat)) {
             mesh.material = originalMat.map((mat) => createAlbedoMaterial(mat));
           } else {
@@ -248,7 +254,6 @@ export function applyRenderMode(
         }
 
         case 'uv': {
-          // Standard UV checker grid texture
           mesh.material = getUVMaterial();
           mesh.castShadow = true;
           mesh.receiveShadow = true;
@@ -256,9 +261,23 @@ export function applyRenderMode(
         }
 
         case 'shader': {
-          // Custom GLSL ShaderMaterial
-          const shaderMat = getCustomShaderMaterial(options?.customShader);
-          mesh.material = shaderMat;
+          if (Array.isArray(originalMat)) {
+            mesh.material = originalMat.map((mat) => {
+              const anyMat = mat as any;
+              return createShaderMaterialForMesh(
+                activeShaderConfig,
+                anyMat.map || null,
+                anyMat.color || null
+              );
+            });
+          } else {
+            const anyMat = originalMat as any;
+            mesh.material = createShaderMaterialForMesh(
+              activeShaderConfig,
+              anyMat.map || null,
+              anyMat.color || null
+            );
+          }
           mesh.castShadow = false;
           mesh.receiveShadow = false;
           break;
